@@ -1,0 +1,28 @@
+services:
+  api:
+    build: ./api
+    environment:
+      - DATABASE_URL=sqlite:///./data/cars.db
+    volumes:
+      - api_data:/app/data
+    ports:
+      - "8000:8000"
+
+  bot:
+    build: ./bot
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - API_BASE_URL=http://api:8000
+      - ALLOWED_USER_IDS=${ALLOWED_USER_IDS:-}
+    depends_on:
+      - api
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  api_data:
