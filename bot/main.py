@@ -25,6 +25,33 @@ ALLOWED_USER_IDS = {
 dp = Dispatcher()
 
 
+def _format_api_error(resp: "httpx.Response", payload: list[dict]) -> str:
+    """Turn a FastAPI validation error into something humans can read."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return resp.text[:500] or "пустой ответ"
+
+    detail = body.get("detail") if isinstance(body, dict) else body
+    if not isinstance(detail, list):
+        return str(detail)[:500]
+
+    lines: list[str] = []
+    for err in detail[:10]:
+        loc = err.get("loc", [])
+        row_idx = loc[1] if len(loc) > 1 and isinstance(loc[1], int) else None
+        field = ".".join(str(p) for p in loc[2:]) or "<root>"
+        msg = err.get("msg", "invalid")
+        bad_value = ""
+        if row_idx is not None and row_idx < len(payload):
+            bad_value = f" (получили: {payload[row_idx].get(field)!r})"
+        row_label = f"строка {row_idx + 1}" if row_idx is not None else "payload"
+        lines.append(f"{row_label} · {field}: {msg}{bad_value}")
+    if len(detail) > 10:
+        lines.append(f"...и ещё {len(detail) - 10} ошибок")
+    return "\n".join(lines)
+
+
 @dp.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
@@ -71,11 +98,18 @@ async def on_document(message: Message, bot: Bot) -> None:
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             resp = await client.post(f"{API_BASE_URL}/api/cars/bulk", json=payload)
-            resp.raise_for_status()
         except httpx.HTTPError as exc:
             logger.exception("API call failed")
             await status_msg.edit_text(f"❌ Ошибка обращения к API: {exc}")
             return
+
+    if resp.status_code >= 400:
+        detail = _format_api_error(resp, payload)
+        logger.error("API %s: %s", resp.status_code, resp.text)
+        await status_msg.edit_text(
+            f"❌ API вернул {resp.status_code}.\n\n{detail}"[:4000]
+        )
+        return
 
     body = resp.json()
     summary_lines = [
