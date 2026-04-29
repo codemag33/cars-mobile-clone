@@ -50,9 +50,7 @@ def bulk_create(
     skipped = 0
     errors: list[str] = []
 
-    existing_vins = {
-        v for (v,) in session.exec(select(Car.vin)).all()
-    }
+    existing_vins = set(session.exec(select(Car.vin)).all())
 
     for incoming in cars:
         if incoming.vin in existing_vins:
@@ -67,7 +65,7 @@ def bulk_create(
         except IntegrityError:
             session.rollback()
             skipped += 1
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             session.rollback()
             errors.append(f"{incoming.vin}: {exc}")
 
