@@ -20,19 +20,18 @@ Telegram user → aiogram bot → POST /api/cars → FastAPI → SQLite
 
 ## Формат Excel
 
-Первый лист, опционально с заголовком в первой строке. Колонки:
+Парсер ищет в первых 10 строках листа строку-заголовок и сопоставляет колонки
+по названию (русские и английские алиасы). Лишние колонки игнорируются,
+порядок не важен.
 
-| # | Поле | Пример |
-|---|---|---|
-| A | brand | BMW |
-| B | model | X5 |
-| C | price | 5600000 |
-| D | year | 2020 |
-| E | mileage | 45000 |
-| F | fuel | Дизель |
-| G | transmission | АКПП |
-| H | vin | WBAFE41070LN12345 |
-| I | location (опц.) | Москва |
+**Обязательные колонки:** `Марка` / `Brand`, `Модель` / `Model`, `VIN`,
+`Год выпуска` / `Year`, `Пробег` / `Mileage`, `Цена продажи` / `Price`.
+
+**Опциональные:** `Топливо` / `Fuel`, `Коробка` / `Transmission`,
+`Месторасположение` / `Location`.
+
+Числа можно с единицами измерения — `"1 500 000 руб."`, `"2020 г."`,
+`"150 000 км."` парсер чистит.
 
 Дубликаты по `vin` пропускаются.
 
@@ -72,7 +71,7 @@ python main.py
 
 Отправьте боту `.xlsx` файл — он распарсит первый лист и зальёт авто в API.
 
-## Быстрый старт (Docker)
+## Быстрый старт (Docker, локально)
 
 ```bash
 echo "BOT_TOKEN=123456:ABC..." > .env
@@ -82,64 +81,37 @@ docker compose up --build
 - API: <http://localhost:8000>
 - Frontend: <http://localhost:8080>
 
-Запуск через Docker
-1. Установите Docker (если ещё нет)
-Windows/Mac: Docker Desktop → https://www.docker.com/products/docker-desktop/
-Linux (Ubuntu/Debian):
+## Деплой на VPS с HTTPS
 
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-# перезайдите, чтобы применилось
-Проверка: docker --version && docker compose version
-2. Клонируйте репо и настройте токен
+Используется отдельный overlay `docker-compose.prod.yml` с Caddy в качестве
+reverse-proxy — он автоматически получает и продлевает TLS-сертификат от
+Let's Encrypt.
 
+Перед запуском:
+
+1. Купите домен и направьте A-запись на IP вашего VPS.
+2. Откройте порты 80 и 443 (`ufw allow 80,443/tcp`).
+3. Установите Docker (`curl -fsSL https://get.docker.com | sudo sh`).
+
+```bash
 git clone https://github.com/codemag33/cars-mobile-clone.git
 cd cars-mobile-clone
-Создайте .env файл в корне репо с токеном вашего Telegram-бота (возьмите у @BotFather → /newbot):
-
 
 cat > .env <<EOF
-BOT_TOKEN=123456789:AAA-ваш-токен-от-BotFather
+BOT_TOKEN=123456:ABC...
 ALLOWED_USER_IDS=
+DOMAIN=cars.example.com
 EOF
-Если хотите ограничить кто может грузить Excel — в ALLOWED_USER_IDS через запятую ваши Telegram user_id (узнать можно через @userinfobot). Пустое = любой пользователь.
 
-3. Запустите одной командой
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
 
-docker compose up --build
+Через 30-60 секунд сайт будет доступен по `https://cars.example.com`,
+API — по `https://cars.example.com/api/cars`. Логи: `docker compose logs -f caddy`.
 
+Обновление:
 
-
-Поднимутся три контейнера:
-
-api (FastAPI) → http://localhost:8000 (docs: http://localhost:8000/docs)
-bot (aiogram, подключится к Telegram и начнёт слушать)
-frontend (Vue + nginx) → http://localhost:8080
-
-
-
-
-4. Как пользоваться
-Откройте http://localhost:8080 в браузере — увидите пустой каталог.
-В Telegram найдите вашего бота по имени (которое дали у BotFather) → /start.
-Отправьте боту .xlsx файл с колонками: brand, model, price, year, mileage, fuel, transmission, vin, location.
-Бот ответит «Создано N / дубликатов M», обновите страницу фронта — объявления появятся.
-
-
-
-
-
-5. Остановка / очистка
-
-docker compose down          # остановить
-
-docker compose down -v       # остановить + удалить БД SQLite
-
-docker compose logs -f bot   # посмотреть логи конкретного сервиса
-
-docker compose up -d --build # запустить в фоне
-
-Возможные проблемы
-Порт 8080 или 8000 занят → поправьте в docker-compose.yml ("8888:80" вместо "8080:80").
-Бот не отвечает → docker compose logs bot; чаще всего неверный BOT_TOKEN.
-CORS ошибки на фронте → в production frontend проксирует /api/ на backend через nginx, всё должно работать из коробки. Если запускаете фронт на другом порту — проверьте frontend/nginx.conf.
+```bash
+git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```

@@ -1,0 +1,21 @@
+{$DOMAIN} {
+    encode gzip
+
+    # API requests: /api/* → strip /api prefix and forward to api service
+    handle_path /api/* {
+        reverse_proxy api:8000 {
+            header_up X-Forwarded-Prefix /api
+        }
+    }
+
+    # FastAPI helpers (health, openapi, docs) — forward as-is
+    @api_helpers path /health /docs /docs/* /openapi.json /redoc /redoc/*
+    handle @api_helpers {
+        reverse_proxy api:8000
+    }
+
+    # Everything else goes to the static frontend (Vue + nginx)
+    handle {
+        reverse_proxy frontend:80
+    }
+}

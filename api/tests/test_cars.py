@@ -93,3 +93,20 @@ def test_filters(client):
 
     r = client.get("/api/cars", params={"min_year": 2020})
     assert len(r.json()) == 1
+
+
+def test_create_car_without_fuel_and_transmission(client):
+    """Real-world inventory exports often don't have fuel/transmission columns."""
+    minimal = {
+        "brand": "BMW",
+        "model": "X5",
+        "price": 5_600_000,
+        "year": 2020,
+        "mileage": 45_000,
+        "vin": "MINIMAL000000001",
+    }
+    r = client.post("/api/cars", json=minimal)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["fuel"] is None
+    assert body["transmission"] is None

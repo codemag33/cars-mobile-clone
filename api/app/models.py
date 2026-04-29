@@ -9,8 +9,8 @@ class CarBase(SQLModel):
     price: int
     year: int = Field(index=True)
     mileage: int
-    fuel: str
-    transmission: str
+    fuel: str | None = None
+    transmission: str | None = None
     vin: str = Field(index=True, unique=True)
     location: str | None = None
 

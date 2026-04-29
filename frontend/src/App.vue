@@ -60,8 +60,8 @@
             <p class="specs">
               <span>📅 {{ car.year }} г.</span>
               <span>🛣️ {{ car.mileage.toLocaleString('ru-RU') }} км</span>
-              <span>⛽ {{ car.fuel }}</span>
-              <span>⚙️ {{ car.transmission }}</span>
+              <span>⛽ {{ car.fuel || '—' }}</span>
+              <span>⚙️ {{ car.transmission || '—' }}</span>
             </p>
 
             <div class="location">📍 {{ car.location || 'не указано' }}</div>
