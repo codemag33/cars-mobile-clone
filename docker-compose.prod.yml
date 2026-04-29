@@ -1,0 +1,33 @@
+# Production overlay: adds Caddy reverse proxy with automatic Let's Encrypt TLS.
+# Usage:
+#   echo "DOMAIN=cars.example.com" >> .env
+#   echo "BOT_TOKEN=..." >> .env
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - frontend
+
+  # Hide internal services behind Caddy: drop the public port mappings.
+  frontend:
+    ports: !reset []
+
+  api:
+    ports: !reset []
+
+volumes:
+  caddy_data:
+  caddy_config:

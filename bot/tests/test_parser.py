@@ -134,3 +134,40 @@ def test_missing_required_columns_reported():
     # Header detected (brand present) but no vin/price → detector returns None
     # and parser falls back to positional, then fails on the data row.
     assert result.cars == []
+
+
+def test_header_found_when_title_row_precedes_it():
+    """Real exports often have a title row above the actual header."""
+    data = _build_xlsx([
+        ["Отчёт по продажам автомобилей за 2024 год", None, None],
+        [None, None, None],
+        ["Марка", "Модель", "VIN", "Год выпуска", "Пробег", "Цена продажи"],
+        ["BMW", "X5", "VIN0001", 2020, 45000, 5_600_000],
+    ])
+    result = parse_excel(data)
+    assert result.errors == [], result.errors
+    assert len(result.cars) == 1
+    assert result.cars[0].brand == "BMW"
+
+
+def test_nbsp_and_weird_whitespace_in_headers():
+    """Headers with non-breaking spaces or trailing whitespace still match."""
+    data = _build_xlsx([
+        ["Марка\u00a0", " Модель ", "VIN", "Год\u00a0выпуска", "Пробег, км.", "Цена продажи, руб."],
+        ["BMW", "X5", "VIN0001", 2020, 45000, 5_600_000],
+    ])
+    result = parse_excel(data)
+    assert result.errors == [], result.errors
+    assert len(result.cars) == 1
+
+
+def test_clear_error_when_no_header_and_no_numeric_data():
+    """If we can't find a header and data doesn't look positional — report clearly."""
+    data = _build_xlsx([
+        ["Неизвестно", "что-то", "Месторасположение", "тоже"],
+        ["foo", "bar", "Пригородный", "baz"],
+    ])
+    result = parse_excel(data)
+    assert result.cars == []
+    assert len(result.errors) == 1
+    assert "Не удалось найти строку заголовков" in result.errors[0]

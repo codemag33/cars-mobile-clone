@@ -119,9 +119,13 @@ async def on_document(message: Message, bot: Bot) -> None:
     ]
     if parsed.errors:
         summary_lines.append(f"Невалидных строк в файле: {len(parsed.errors)}")
+        summary_lines.append("Примеры ошибок:")
+        summary_lines.extend(parsed.errors[:5])
+        if len(parsed.errors) > 5:
+            summary_lines.append(f"...и ещё {len(parsed.errors) - 5}")
     if body.get("invalid"):
         summary_lines.append(f"Отклонено API: {body['invalid']}")
-    await status_msg.edit_text("\n".join(summary_lines))
+    await status_msg.edit_text("\n".join(summary_lines)[:4000])
 
 
 async def main() -> None:

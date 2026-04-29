@@ -87,9 +87,12 @@ class ParseResult:
 def _normalize_header(cell: Any) -> str:
     if cell is None:
         return ""
-    text = str(cell).strip().lower().strip('"\'«»').strip()
-    # Drop any punctuation (commas, dots, slashes etc), collapse whitespace.
-    text = re.sub(r"[.,;:!?()\[\]/\\]+", " ", text)
+    text = str(cell)
+    # Replace non-breaking / zero-width / weird whitespace with regular space.
+    text = text.replace("\u00a0", " ").replace("\u200b", "").replace("\ufeff", "")
+    text = text.strip().lower().strip('"\'«»').strip()
+    # Drop any punctuation (commas, dots, slashes, hashes etc), collapse whitespace.
+    text = re.sub(r"[.,;:!?()\[\]/\\№#*]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -104,6 +107,8 @@ def _detect_header(row: tuple[Any, ...]) -> dict[str, int] | None:
         for field_name, aliases in COLUMN_ALIASES.items():
             if field_name in mapping:
                 continue
+            # Match if normalized header equals alias OR starts with alias+space
+            # (e.g. "год выпуска" alias "год" → also matches, but full alias "год выпуска" wins via ordering).
             if norm in aliases:
                 mapping[field_name] = idx
                 break
@@ -111,6 +116,10 @@ def _detect_header(row: tuple[Any, ...]) -> dict[str, int] | None:
     if "brand" in mapping and ("vin" in mapping or "price" in mapping):
         return mapping
     return None
+
+
+# How many top rows to scan when looking for the header row.
+_HEADER_SCAN_ROWS = 10
 
 
 def _to_int(value: Any) -> int:
@@ -139,6 +148,18 @@ def _to_str(value: Any) -> str:
     return str(value).strip()
 
 
+def _col_letter(idx: int) -> str:
+    """Convert 0-based column index to Excel letter (0 → 'A')."""
+    result = ""
+    n = idx
+    while True:
+        result = chr(ord("A") + n % 26) + result
+        n = n // 26 - 1
+        if n < 0:
+            break
+    return result
+
+
 def _positional_mapping() -> dict[str, int]:
     """Legacy fallback: A..I = brand, model, price, year, mileage, fuel, transmission, vin, location."""
     return {
@@ -164,36 +185,72 @@ def _get(row: tuple[Any, ...], mapping: dict[str, int], field_name: str) -> Any:
 def parse_excel(data: bytes) -> ParseResult:
     """Parse the first sheet of an xlsx file into CarDTO objects.
 
-    Columns are matched by header name. If no recognisable header is found,
-    the legacy positional layout (A..I) is used for backward compatibility.
+    Scans the first rows looking for a header row (matched by column names,
+    see COLUMN_ALIASES). If no header is found, falls back to the legacy
+    positional layout (A..I) only when the first row looks numeric.
     """
     wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
     ws = wb.worksheets[0]
 
-    rows_iter = ws.iter_rows(values_only=True)
     result = ParseResult()
-
-    first_row = next(rows_iter, None)
-    if first_row is None:
+    all_rows = list(ws.iter_rows(values_only=True))
+    if not all_rows:
         return result
 
-    mapping = _detect_header(first_row)
+    # Scan top rows for a header match.
+    header_row_idx: int | None = None
+    mapping: dict[str, int] | None = None
+    for i, row in enumerate(all_rows[:_HEADER_SCAN_ROWS]):
+        candidate = _detect_header(row)
+        if candidate is not None:
+            mapping = candidate
+            header_row_idx = i
+            break
+
     if mapping is None:
+        # No header anywhere in the top rows. Fall back to positional ONLY if
+        # the first non-empty row looks like numeric data; otherwise report a
+        # clear error with what we saw so the user can adjust.
+        first_nonempty = next(
+            (r for r in all_rows if r and any(c is not None and c != "" for c in r)),
+            None,
+        )
+        if first_nonempty is None:
+            return result
+
+        # Heuristic: treat as positional data if col C (price) is numeric.
+        col_c = first_nonempty[2] if len(first_nonempty) > 2 else None
+        looks_numeric = isinstance(col_c, (int, float)) or (
+            isinstance(col_c, str) and any(ch.isdigit() for ch in col_c)
+        )
+        if not looks_numeric:
+            preview = [
+                _normalize_header(c) for c in all_rows[0][:12] if c not in (None, "")
+            ]
+            result.errors.append(
+                "Не удалось найти строку заголовков. Ожидаю как минимум "
+                "колонки 'Марка' и 'VIN' (или 'Цена продажи') в первых "
+                f"{_HEADER_SCAN_ROWS} строках. Увидел в первой строке: "
+                + (", ".join(repr(p) for p in preview) if preview else "пусто")
+            )
+            return result
+
         mapping = _positional_mapping()
-        data_rows: list[tuple[Any, ...]] = [first_row, *list(rows_iter)]
-        header_present = False
+        data_rows: list[tuple[Any, ...]] = all_rows
+        start_row = 1
     else:
         missing = [f for f in REQUIRED_FIELDS if f not in mapping]
         if missing:
+            found = ", ".join(f"{k}={_col_letter(v)}" for k, v in mapping.items())
             result.errors.append(
-                "В заголовке не найдены обязательные колонки: "
-                + ", ".join(missing)
+                f"В заголовке не хватает обязательных колонок: {', '.join(missing)}. "
+                f"Нашёл: {found}."
             )
             return result
-        data_rows = list(rows_iter)
-        header_present = True
+        assert header_row_idx is not None
+        data_rows = all_rows[header_row_idx + 1 :]
+        start_row = header_row_idx + 2
 
-    start_row = 2 if header_present else 1
     for offset, raw in enumerate(data_rows):
         row_idx = start_row + offset
         if raw is None or all(cell is None or cell == "" for cell in raw):
